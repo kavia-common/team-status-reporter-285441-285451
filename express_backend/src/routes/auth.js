@@ -64,7 +64,7 @@ router.post('/register', authController.register.bind(authController));
  * /api/auth/login:
  *   post:
  *     summary: Login with email and password
- *     description: Authenticate an existing user and retrieve a token placeholder.
+ *     description: Authenticate an existing user and retrieve a JWT token.
  *     tags: [Auth]
  *     requestBody:
  *       description: Provide email and password for login.

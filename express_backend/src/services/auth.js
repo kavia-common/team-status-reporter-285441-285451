@@ -2,6 +2,7 @@
 
 const bcrypt = require('bcrypt');
 const pool = require('../db/pool');
+const { signToken } = require('../utils/jwt');
 
 const SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS || '10', 10);
 
@@ -50,7 +51,13 @@ async function registerUser({ name, email, password }) {
     );
 
     const user = insertRes.rows[0];
-    const token = 'TOKEN_PLACEHOLDER'; // Replace with JWT when implemented
+
+    // Build JWT payload: sub (subject) as user id, include email and role
+    const token = signToken({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
 
     return { user, token };
   } finally {
@@ -91,7 +98,12 @@ async function loginUser({ email, password }) {
   }
 
   const { password_hash, ...user } = userRow;
-  const token = 'TOKEN_PLACEHOLDER'; // Replace with JWT when implemented
+
+  const token = signToken({
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+  });
 
   return { user, token };
 }

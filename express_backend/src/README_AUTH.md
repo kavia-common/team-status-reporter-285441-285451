@@ -15,4 +15,8 @@ Database table users expected columns:
 - role (text or text[])
 - created_at, updated_at (timestamptz), deleted_at (timestamptz nullable)
 
-Note: token is a placeholder string until JWT is implemented.
+JWT usage:
+- The token returned is a signed JWT containing { sub: user.id, email, role }.
+- Send it in Authorization header as: Bearer <token>.
+- Configure environment variable JWT_SECRET with a strong random value.
+- Optional: JWT_EXPIRATION to override default '7d' expiry.

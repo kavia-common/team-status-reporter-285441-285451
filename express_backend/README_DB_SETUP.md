@@ -25,6 +25,8 @@ POSTGRES_PASSWORD=apppassword
 POSTGRES_DB=team_status
 POSTGRES_SSL=false
 BCRYPT_SALT_ROUNDS=10
+JWT_SECRET=replace-with-a-long-random-string
+JWT_EXPIRATION=7d
 PORT=3001
 HOST=0.0.0.0
 ```

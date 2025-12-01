@@ -17,6 +17,14 @@ const options = {
       { name: 'Health', description: 'Service health check' },
     ],
     components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description: 'Provide the JWT as: Bearer <token>',
+        },
+      },
       schemas: {
         RegisterRequest: {
           type: 'object',
@@ -63,8 +71,8 @@ const options = {
             user: { $ref: '#/components/schemas/AuthUser' },
             token: {
               type: 'string',
-              description: 'Authentication token (placeholder until JWT is implemented)',
-              example: 'TOKEN_PLACEHOLDER',
+              description: 'JWT bearer token. Include as Authorization: Bearer <token>.',
+              example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
             },
           },
         },
