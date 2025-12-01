@@ -377,7 +377,7 @@ async function changeMemberRole(teamId, userId, role, actor) {
 // PUBLIC_INTERFACE
 async function listRoles() {
   /** List available roles from roles table. */
-  const r = await pool.query(`SELECT id, name, description, created_at FROM roles ORDER BY name ASC`);
+  const r = await pool.query('SELECT id, name, description, created_at FROM roles ORDER BY name ASC');
   return r.rows;
 }
 
@@ -410,12 +410,12 @@ async function assignRole(teamId, userId, roleName, actor) {
   }
 
   // Ensure role exists
-  await pool.query(`INSERT INTO roles (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`, [role]);
+  await pool.query('INSERT INTO roles (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [role]);
 
   const r = await pool.query(
-    `INSERT INTO role_assignments (user_id, team_id, role_name)
-     VALUES ($1, $2, $3)
-     RETURNING id, user_id, team_id, role_name, created_at, revoked_at`,
+    'INSERT INTO role_assignments (user_id, team_id, role_name) ' +
+    'VALUES ($1, $2, $3) ' +
+    'RETURNING id, user_id, team_id, role_name, created_at, revoked_at',
     [userId, teamId || null, role]
   );
   return r.rows[0];
@@ -432,7 +432,7 @@ async function revokeRole(assignmentId, actor) {
 
   // Need to load the assignment to know scope
   const cur = await pool.query(
-    `SELECT id, user_id, team_id, role_name, revoked_at FROM role_assignments WHERE id = $1`,
+    'SELECT id, user_id, team_id, role_name, revoked_at FROM role_assignments WHERE id = $1',
     [assignmentId]
   );
   if (cur.rows.length === 0) {

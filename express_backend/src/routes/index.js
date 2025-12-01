@@ -3,6 +3,7 @@ const healthController = require('../controllers/health');
 const authRoutes = require('./auth');
 const teamsRoutes = require('./teams');
 const rolesRoutes = require('./roles');
+const bootstrapRoutes = require('./bootstrap');
 
 const router = express.Router();
 // Health endpoint
@@ -12,6 +13,8 @@ const router = express.Router();
  * tags:
  *   - name: Health
  *     description: Service health check
+ *   - name: Bootstrap
+ *     description: One-time setup utilities guarded by environment flags. Do not enable in production.
  */
 
 /**
@@ -47,5 +50,6 @@ router.get('/', healthController.check.bind(healthController));
 router.use('/api/auth', authRoutes);
 router.use('/api/teams', teamsRoutes);
 router.use('/api/roles', rolesRoutes);
+router.use('/api/bootstrap', bootstrapRoutes);
 
 module.exports = router;

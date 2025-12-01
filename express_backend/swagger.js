@@ -17,6 +17,7 @@ const options = {
       { name: 'Health', description: 'Service health check' },
       { name: 'Teams', description: 'Team and membership management' },
       { name: 'Roles', description: 'Role listing and assignment' },
+      { name: 'Bootstrap', description: 'One-time setup utilities guarded by environment flags. Do not enable in production.' },
     ],
     components: {
       securitySchemes: {

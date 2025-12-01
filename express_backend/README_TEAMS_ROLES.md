@@ -4,17 +4,46 @@ This backend includes team and role management with JWT-based authorization.
 
 Prerequisites:
 - Database is configured (see README_DB_SETUP.md)
-- Apply schema for teams and roles:
+
+Apply schema for users/teams/roles (idempotent):
+- Users:
+  psql "$POSTGRES_URL" -f ./src/db/bootstrap.sql
+- Teams + role tables:
   psql "$POSTGRES_URL" -f ./src/db/bootstrap_teams.sql
+- Ensure baseline roles exist (admin, manager, member):
+  psql "$POSTGRES_URL" -f ./src/db/bootstrap_roles.sql
 
 Note:
-- If you previously created the teams table without archived_at, re-run the above bootstrap_teams.sql. The script is idempotent and now adds missing soft-delete columns (teams.archived_at, team_members.removed_at, role_assignments.revoked_at) to existing databases.
+- If you previously created the teams table without archived_at, re-run bootstrap_teams.sql. The script is idempotent and now adds missing soft-delete columns (teams.archived_at, team_members.removed_at, role_assignments.revoked_at) to existing databases.
+- The roles list endpoint will be empty until roles are seeded. Run bootstrap_roles.sql above.
 
 Security:
 - Send Authorization: Bearer <JWT> header.
 - Global `admin` (from users.role) can create teams and manage all.
 - Team managers/admins can manage their team members and assignments.
 - Regular members can list/view teams they belong to.
+
+Granting admin (one-time bootstrap):
+Option A: Guarded endpoint (set ALLOW_BOOTSTRAP_ADMIN=true temporarily)
+1) Start server with ALLOW_BOOTSTRAP_ADMIN=true in environment.
+2) Grant admin by email:
+   curl -s -X POST "http://localhost:3001/api/bootstrap/grant-admin" \
+     -H "Content-Type: application/json" \
+     -d '{"email":"alice@example.com"}' | jq .
+   Or by userId:
+   curl -s -X POST "http://localhost:3001/api/bootstrap/grant-admin" \
+     -H "Content-Type: application/json" \
+     -d '{"userId":"<uuid>"}' | jq .
+3) Immediately remove or set ALLOW_BOOTSTRAP_ADMIN=false after use.
+
+Option B: SQL snippet (no endpoint needed)
+psql "$POSTGRES_URL" <<'SQL'
+-- Ensure admin role exists
+INSERT INTO roles (name) VALUES ('admin') ON CONFLICT (name) DO NOTHING;
+-- Set global admin on users table by email
+UPDATE users SET role = 'admin', updated_at = NOW()
+WHERE lower(email) = lower('alice@example.com') AND deleted_at IS NULL;
+SQL
 
 Example flow:
 

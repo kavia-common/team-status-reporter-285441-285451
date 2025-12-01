@@ -45,6 +45,7 @@ Also apply team/roles schema:
 
 ```
 psql "$POSTGRES_URL" -f ./src/db/bootstrap_teams.sql
+psql "$POSTGRES_URL" -f ./src/db/bootstrap_roles.sql
 ```
 
 If you do not have `POSTGRES_URL`, build it from parts:
