@@ -13,13 +13,14 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.set('trust proxy', true);
-app.use('/docs', swaggerUi.serve, (req, res, next) => {
-  const host = req.get('host');           // may or may not include port
-  let protocol = req.protocol;          // http or https
 
+// Helper to inject runtime server URL so Try It Out targets correct host
+function buildDynamicSpec(req) {
+  const host = req.get('host'); // may or may not include port
+  let protocol = req.protocol;  // http or https
   const actualPort = req.socket.localPort;
   const hasPort = host.includes(':');
-  
+
   const needsPort =
     !hasPort &&
     ((protocol === 'http' && actualPort !== 80) ||
@@ -27,15 +28,23 @@ app.use('/docs', swaggerUi.serve, (req, res, next) => {
   const fullHost = needsPort ? `${host}:${actualPort}` : host;
   protocol = req.secure ? 'https' : protocol;
 
-  const dynamicSpec = {
+  return {
     ...swaggerSpec,
-    servers: [
-      {
-        url: `${protocol}://${fullHost}`,
-      },
-    ],
+    servers: [{ url: `${protocol}://${fullHost}` }],
   };
-  swaggerUi.setup(dynamicSpec)(req, res, next);
+}
+
+// Expose OpenAPI JSON explicitly (used by CI, other services, and Swagger UI)
+app.get('/openapi.json', (req, res) => {
+  res.json(buildDynamicSpec(req));
+});
+
+// Mount Swagger UI at /docs
+app.use('/docs', swaggerUi.serve, (req, res, next) => {
+  const dynamicSpec = buildDynamicSpec(req);
+  swaggerUi.setup(dynamicSpec, {
+    explorer: true,
+  })(req, res, next);
 });
 
 // Parse JSON request body

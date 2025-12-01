@@ -16,6 +16,7 @@ const router = express.Router();
  * /api/auth/register:
  *   post:
  *     summary: Register a new user
+ *     description: Create a new user account using name, email, and password.
  *     tags: [Auth]
  *     requestBody:
  *       description: Provide name, email, and password to create an account.
@@ -23,38 +24,38 @@ const router = express.Router();
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [name, email, password]
- *             properties:
- *               name:
- *                 type: string
- *                 description: Full name
- *               email:
- *                 type: string
- *                 format: email
- *                 description: Unique email
- *               password:
- *                 type: string
- *                 format: password
- *                 description: Password with minimum length of 8
+ *             $ref: '#/components/schemas/RegisterRequest'
+ *           examples:
+ *             default:
+ *               summary: Valid registration payload
+ *               value:
+ *                 name: Alice Example
+ *                 email: alice@example.com
+ *                 password: Password123!
  *     responses:
  *       201:
  *         description: User registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthResponse'
+ *             examples:
+ *               created:
+ *                 value:
+ *                   user:
+ *                     id: c0f5e3a4-8f2a-4d2a-92b0-9b2f44f082e2
+ *                     name: Alice Example
+ *                     email: alice@example.com
+ *                     role: user
+ *                     created_at: '2025-01-01T12:00:00.000Z'
+ *                     updated_at: '2025-01-01T12:00:00.000Z'
+ *                   token: TOKEN_PLACEHOLDER
  *       400:
- *         description: Validation error
+ *         $ref: '#/components/responses/ValidationError'
  *       409:
- *         description: Email already exists
+ *         $ref: '#/components/responses/ConflictError'
  *       500:
- *         description: Internal server error
- *
- * Postman example:
- * POST {{BASE_URL}}/api/auth/register
- * Body (JSON):
- * {
- *   "name": "Alice Example",
- *   "email": "alice@example.com",
- *   "password": "Password123!"
- * }
+ *         $ref: '#/components/responses/InternalServerError'
  */
 router.post('/register', authController.register.bind(authController));
 
@@ -63,6 +64,7 @@ router.post('/register', authController.register.bind(authController));
  * /api/auth/login:
  *   post:
  *     summary: Login with email and password
+ *     description: Authenticate an existing user and retrieve a token placeholder.
  *     tags: [Auth]
  *     requestBody:
  *       description: Provide email and password for login.
@@ -70,32 +72,37 @@ router.post('/register', authController.register.bind(authController));
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required: [email, password]
- *             properties:
- *               email:
- *                 type: string
- *                 format: email
- *               password:
- *                 type: string
- *                 format: password
+ *             $ref: '#/components/schemas/LoginRequest'
+ *           examples:
+ *             default:
+ *               summary: Valid login payload
+ *               value:
+ *                 email: alice@example.com
+ *                 password: Password123!
  *     responses:
  *       200:
  *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthResponse'
+ *             examples:
+ *               ok:
+ *                 value:
+ *                   user:
+ *                     id: c0f5e3a4-8f2a-4d2a-92b0-9b2f44f082e2
+ *                     name: Alice Example
+ *                     email: alice@example.com
+ *                     role: user
+ *                     created_at: '2025-01-01T12:00:00.000Z'
+ *                     updated_at: '2025-01-01T12:00:00.000Z'
+ *                   token: TOKEN_PLACEHOLDER
  *       400:
- *         description: Validation error
+ *         $ref: '#/components/responses/ValidationError'
  *       401:
- *         description: Invalid credentials
+ *         $ref: '#/components/responses/UnauthorizedError'
  *       500:
- *         description: Internal server error
- *
- * Postman example:
- * POST {{BASE_URL}}/api/auth/login
- * Body (JSON):
- * {
- *   "email": "alice@example.com",
- *   "password": "Password123!"
- * }
+ *         $ref: '#/components/responses/InternalServerError'
  */
 router.post('/login', authController.login.bind(authController));
 
