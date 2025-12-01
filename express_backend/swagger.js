@@ -16,7 +16,7 @@ const options = {
       { name: 'Auth', description: 'Authentication endpoints' },
       { name: 'Health', description: 'Service health check' },
       { name: 'Teams', description: 'Team and membership management' },
-      { name: 'Roles', description: 'Role listing and assignment' },
+      { name: 'Roles', description: 'Role catalog (enum-compatible). Team roles are managed via team_members.' },
       { name: 'Bootstrap', description: 'One-time setup utilities guarded by environment flags. Do not enable in production.' },
     ],
     components: {

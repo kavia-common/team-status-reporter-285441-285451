@@ -9,7 +9,7 @@ const router = express.Router();
  * @swagger
  * tags:
  *   - name: Roles
- *     description: Role listing and assignment
+ *     description: Role catalog (enum-compatible). Team roles are managed via team_members.
  */
 
 /**
@@ -30,35 +30,27 @@ router.get('/', authenticate, rolesController.list.bind(rolesController));
  * @swagger
  * /api/roles/assign:
  *   post:
- *     summary: Assign a role to a user in a team (teamId optional for global; admin only)
+ *     summary: (Deprecated) Role assignment via separate table is not used in canonical schema
+ *     description: This project uses team_members.team_role and is_manager for team roles and users.role for global admin. Use team member endpoints instead.
  *     tags: [Roles]
+ *     deprecated: true
  *     security:
  *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [userId, roleName]
- *             properties:
- *               userId: { type: string }
- *               teamId: { type: string, nullable: true }
- *               roleName: { type: string, enum: [member, manager, admin] }
  *     responses:
- *       201:
- *         description: Role assignment created
- *       403:
- *         description: Forbidden
+ *       410:
+ *         description: Gone - use team member role change endpoints instead
  */
-router.post('/assign', authenticate, rolesController.assign.bind(rolesController));
+router.post('/assign', authenticate, (req, res) =>
+  res.status(410).json({ error: 'Deprecated. Use /api/teams/{teamId}/members or PATCH member role.' })
+);
 
 /**
  * @swagger
  * /api/roles/assign/{id}:
  *   delete:
- *     summary: Revoke a role assignment
+ *     summary: (Deprecated) Role revocation via separate table is not used
  *     tags: [Roles]
+ *     deprecated: true
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -67,9 +59,11 @@ router.post('/assign', authenticate, rolesController.assign.bind(rolesController
  *         required: true
  *         schema: { type: string }
  *     responses:
- *       200:
- *         description: Revoked
+ *       410:
+ *         description: Gone
  */
-router.delete('/assign/:id', authenticate, rolesController.revoke.bind(rolesController));
+router.delete('/assign/:id', authenticate, (req, res) =>
+  res.status(410).json({ error: 'Deprecated. Use team_members updates instead.' })
+);
 
 module.exports = router;

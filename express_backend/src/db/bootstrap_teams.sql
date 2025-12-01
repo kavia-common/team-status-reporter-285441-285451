@@ -1,5 +1,5 @@
--- Bootstrap SQL for teams, team_members, roles and role_assignments.
--- Idempotent creation, aligned for soft-delete support via archived_at/deleted_at.
+-- Bootstrap SQL for teams and team_members aligned to canonical schema (no role_assignments).
+-- Idempotent creation, soft-delete via deleted_at columns.
 
 -- Ensure extensions for UUID if possible
 DO $$
@@ -20,20 +20,19 @@ CREATE TABLE IF NOT EXISTS teams (
   description TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  archived_at TIMESTAMPTZ NULL
+  deleted_at TIMESTAMPTZ NULL
 );
 
--- Ensure archived_at exists if teams table pre-existed without it
+-- Backfill/normalize deleted_at if legacy archived_at exists
 DO $$
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_name = 'teams'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'teams' AND column_name = 'archived_at'
-  ) THEN
-    ALTER TABLE teams ADD COLUMN archived_at TIMESTAMPTZ NULL;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'teams' AND column_name = 'archived_at')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'teams' AND column_name = 'deleted_at') THEN
+    ALTER TABLE teams ADD COLUMN deleted_at TIMESTAMPTZ NULL;
+    UPDATE teams SET deleted_at = archived_at WHERE deleted_at IS NULL;
+    ALTER TABLE teams DROP COLUMN archived_at;
+  ELSIF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'teams' AND column_name = 'deleted_at') THEN
+    ALTER TABLE teams ADD COLUMN deleted_at TIMESTAMPTZ NULL;
   END IF;
 END$$;
 
@@ -58,27 +57,62 @@ END$$;
 
 -- team_members table (membership with role at team scope)
 CREATE TABLE IF NOT EXISTS team_members (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  role TEXT NOT NULL DEFAULT 'member', -- member | manager | admin (scoped)
+  team_role TEXT NOT NULL DEFAULT 'employee', -- enum-compatible: employee | manager | admin
+  is_manager BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  removed_at TIMESTAMPTZ NULL,
-  PRIMARY KEY (team_id, user_id)
+  deleted_at TIMESTAMPTZ NULL,
+  UNIQUE (team_id, user_id)
 );
 
--- Ensure removed_at exists if team_members pre-existed without it
+-- Migrate/normalize columns if legacy schema exists
 DO $$
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_name = 'team_members'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'team_members' AND column_name = 'removed_at'
-  ) THEN
-    ALTER TABLE team_members ADD COLUMN removed_at TIMESTAMPTZ NULL;
+  -- Add id if missing (legacy composite PK)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'team_members')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'team_members' AND column_name = 'id') THEN
+    ALTER TABLE team_members ADD COLUMN id UUID;
+    UPDATE team_members SET id = gen_random_uuid() WHERE id IS NULL;
+    ALTER TABLE team_members ADD PRIMARY KEY (id);
+    -- Maintain uniqueness
+    DO $do$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'team_members_team_user_key') THEN
+        ALTER TABLE team_members ADD CONSTRAINT team_members_team_user_key UNIQUE (team_id, user_id);
+      END IF;
+    END
+    $do$;
   END IF;
+
+  -- Rename legacy role to team_role
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'team_members' AND column_name = 'role')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'team_members' AND column_name = 'team_role') THEN
+    ALTER TABLE team_members ADD COLUMN team_role TEXT;
+    UPDATE team_members SET team_role = LOWER(COALESCE(role, 'employee'));
+    ALTER TABLE team_members DROP COLUMN role;
+  END IF;
+
+  -- Add is_manager if missing
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'team_members' AND column_name = 'is_manager') THEN
+    ALTER TABLE team_members ADD COLUMN is_manager BOOLEAN NOT NULL DEFAULT FALSE;
+    UPDATE team_members SET is_manager = (team_role IN ('manager','admin'));
+  END IF;
+
+  -- Normalize soft-delete column removed_at -> deleted_at
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'team_members' AND column_name = 'removed_at')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'team_members' AND column_name = 'deleted_at') THEN
+    ALTER TABLE team_members ADD COLUMN deleted_at TIMESTAMPTZ NULL;
+    UPDATE team_members SET deleted_at = removed_at WHERE deleted_at IS NULL;
+    ALTER TABLE team_members DROP COLUMN removed_at;
+  ELSIF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'team_members' AND column_name = 'deleted_at') THEN
+    ALTER TABLE team_members ADD COLUMN deleted_at TIMESTAMPTZ NULL;
+  END IF;
+
+  -- Backfill defaults for team_role
+  UPDATE team_members SET team_role = 'employee' WHERE team_role IS NULL;
 END$$;
 
 DO $$
@@ -94,44 +128,13 @@ END$$;
 -- roles table (catalog of roles)
 CREATE TABLE IF NOT EXISTS roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT UNIQUE NOT NULL, -- e.g., admin, manager, member, viewer, reporter
+  name TEXT UNIQUE NOT NULL, -- e.g., admin, manager, employee
   description TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Seed common roles if not present
+-- Seed common roles if not present (enum-compatible values)
 INSERT INTO roles (name, description)
 SELECT r, INITCAP(r) || ' role'
-FROM (VALUES ('admin'), ('manager'), ('member')) AS v(r)
+FROM (VALUES ('admin'), ('manager'), ('employee')) AS v(r)
 ON CONFLICT (name) DO NOTHING;
-
--- role_assignments table (explicit role grants at team-scope, may overlap with team_members.role)
-CREATE TABLE IF NOT EXISTS role_assignments (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  team_id UUID NULL REFERENCES teams(id) ON DELETE CASCADE, -- NULL for global role if needed later
-  role_name TEXT NOT NULL, -- references roles(name) by convention
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  revoked_at TIMESTAMPTZ NULL
-);
-
--- Ensure revoked_at exists if role_assignments pre-existed without it
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_name = 'role_assignments'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'role_assignments' AND column_name = 'revoked_at'
-  ) THEN
-    ALTER TABLE role_assignments ADD COLUMN revoked_at TIMESTAMPTZ NULL;
-  END IF;
-END$$;
-
--- Helpful index
-CREATE INDEX IF NOT EXISTS idx_role_assignments_user_team
-  ON role_assignments(user_id, team_id)
-  WHERE revoked_at IS NULL;
-
--- Optional: enforce team_members and role_assignments consistency left to application logic.

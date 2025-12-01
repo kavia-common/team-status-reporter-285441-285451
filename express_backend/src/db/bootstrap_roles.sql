@@ -1,4 +1,4 @@
--- Bootstrap SQL for seeding baseline roles.
+-- Bootstrap SQL for seeding baseline roles (enum-compatible).
 -- This script is idempotent.
 
 -- Ensure UUID generation available if needed
@@ -13,7 +13,7 @@ EXCEPTION WHEN undefined_function THEN
   END;
 END$$;
 
--- Ensure roles table exists (align with bootstrap_teams.sql definition if that already created it)
+-- Ensure roles table exists
 CREATE TABLE IF NOT EXISTS roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT UNIQUE NOT NULL,
@@ -21,8 +21,8 @@ CREATE TABLE IF NOT EXISTS roles (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Seed baseline roles
+-- Seed baseline roles: admin, manager, employee
 INSERT INTO roles (name, description)
 SELECT r, INITCAP(r) || ' role'
-FROM (VALUES ('admin'), ('manager'), ('member')) AS v(r)
+FROM (VALUES ('admin'), ('manager'), ('employee')) AS v(r)
 ON CONFLICT (name) DO NOTHING;

@@ -3,64 +3,57 @@
 const pool = require('../db/pool');
 
 /**
- * Authorization helpers:
- * - isGlobalAdmin: req.user.role === 'admin' (from users.role at login)
- * - teamScopedRole: check team_members.role or role_assignments for user/team
+ * Authorization helpers and role checks aligned to canonical schema:
+ * - Global admin: users.role === 'admin' (from JWT payload)
+ * - Team roles: team_members.team_role enum ('employee'|'manager'|'admin') and is_manager boolean.
+ * - Soft delete: teams.deleted_at, team_members.deleted_at
  */
+
+// Helper to test admin from user payload
+function isGlobalAdminFromUser(user) {
+  return !!(user && typeof user.role === 'string' && user.role.toLowerCase() === 'admin');
+}
 
 // PUBLIC_INTERFACE
 async function isTeamManagerOrAdmin(userId, teamId) {
-  /** Returns true if user is manager/admin for the given team (or global admin). */
+  /** Returns true if user is manager/admin for the given team (team_members.team_role or is_manager). */
   if (!userId || !teamId) return false;
 
-  // Check team_members table for direct role
-  const q1 = `
-    SELECT role FROM team_members
-    WHERE team_id = $1 AND user_id = $2 AND removed_at IS NULL
+  const q = `
+    SELECT team_role, COALESCE(is_manager, FALSE) AS is_manager
+    FROM team_members
+    WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL
     LIMIT 1
   `;
-  const r1 = await pool.query(q1, [teamId, userId]);
-  if (r1.rows.length > 0) {
-    const role = (r1.rows[0].role || '').toLowerCase();
-    if (role === 'manager' || role === 'admin') return true;
-  }
+  const r = await pool.query(q, [teamId, userId]);
+  if (r.rows.length === 0) return false;
 
-  // Check role_assignments for active assignment
-  const q2 = `
-    SELECT role_name FROM role_assignments
-    WHERE team_id = $1 AND user_id = $2 AND revoked_at IS NULL
-    LIMIT 1
-  `;
-  const r2 = await pool.query(q2, [teamId, userId]);
-  if (r2.rows.length > 0) {
-    const rn = (r2.rows[0].role_name || '').toLowerCase();
-    if (rn === 'manager' || rn === 'admin') return true;
-  }
-  return false;
+  const teamRole = (r.rows[0].team_role || '').toLowerCase();
+  const managerFlag = !!r.rows[0].is_manager;
+
+  return managerFlag || teamRole === 'manager' || teamRole === 'admin';
 }
 
 // PUBLIC_INTERFACE
 async function listTeamsForUser(user) {
-  /** List teams visible to a user. Members see their teams; admin see all. */
+  /** List teams visible to a user. Members see their teams; global admin see all. */
   if (!user) return [];
 
-  const isAdmin = (user.role && typeof user.role === 'string' && user.role.toLowerCase() === 'admin');
-
-  if (isAdmin) {
+  if (isGlobalAdminFromUser(user)) {
     const res = await pool.query(
-      `SELECT id, name, description, created_at, updated_at, archived_at
+      `SELECT id, name, description, created_at, updated_at, deleted_at
        FROM teams
-       WHERE archived_at IS NULL
+       WHERE deleted_at IS NULL
        ORDER BY created_at DESC`
     );
     return res.rows;
   }
 
   const res = await pool.query(
-    `SELECT t.id, t.name, t.description, t.created_at, t.updated_at, t.archived_at
+    `SELECT t.id, t.name, t.description, t.created_at, t.updated_at, t.deleted_at
      FROM teams t
      JOIN team_members m ON m.team_id = t.id
-     WHERE m.user_id = $1 AND m.removed_at IS NULL AND t.archived_at IS NULL
+     WHERE m.user_id = $1 AND m.deleted_at IS NULL AND t.deleted_at IS NULL
      ORDER BY t.created_at DESC`,
     [user.sub]
   );
@@ -69,14 +62,13 @@ async function listTeamsForUser(user) {
 
 // PUBLIC_INTERFACE
 async function createTeam({ name, description }, user) {
-  /** Create a team; only admins/managers (global admin) can create. Creator becomes manager. */
+  /** Create a team; only global admins can create. Creator becomes manager for the team. */
   if (!user) {
     const e = new Error('Unauthorized');
     e.status = 401;
     throw e;
   }
-  const isAdmin = (user.role && typeof user.role === 'string' && user.role.toLowerCase() === 'admin');
-  if (!isAdmin) {
+  if (!isGlobalAdminFromUser(user)) {
     const e = new Error('Forbidden: only admins can create teams.');
     e.status = 403;
     throw e;
@@ -94,18 +86,18 @@ async function createTeam({ name, description }, user) {
     const ins = await client.query(
       `INSERT INTO teams (name, description)
        VALUES ($1, $2)
-       RETURNING id, name, description, created_at, updated_at, archived_at`,
+       RETURNING id, name, description, created_at, updated_at, deleted_at`,
       [name.trim(), description || null]
     );
     const team = ins.rows[0];
 
-    // Creator becomes manager
+    // Creator becomes manager (team_role='manager', is_manager=true)
     await client.query(
-      `INSERT INTO team_members (team_id, user_id, role)
-       VALUES ($1, $2, $3)
+      `INSERT INTO team_members (id, team_id, user_id, team_role, is_manager)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4)
        ON CONFLICT (team_id, user_id)
-       DO UPDATE SET removed_at = NULL, role = EXCLUDED.role`,
-      [team.id, user.sub, 'manager']
+       DO UPDATE SET deleted_at = NULL, team_role = EXCLUDED.team_role, is_manager = EXCLUDED.is_manager, updated_at = NOW()`,
+      [team.id, user.sub, 'manager', true]
     );
 
     await client.query('COMMIT');
@@ -126,11 +118,10 @@ async function getTeamById(teamId, user) {
     e.status = 400;
     throw e;
   }
-  const isAdmin = user && user.role && typeof user.role === 'string' && user.role.toLowerCase() === 'admin';
 
   const r = await pool.query(
-    `SELECT id, name, description, created_at, updated_at, archived_at
-     FROM teams WHERE id = $1 AND archived_at IS NULL`,
+    `SELECT id, name, description, created_at, updated_at, deleted_at
+     FROM teams WHERE id = $1 AND deleted_at IS NULL`,
     [teamId]
   );
   if (r.rows.length === 0) {
@@ -140,10 +131,10 @@ async function getTeamById(teamId, user) {
   }
   const team = r.rows[0];
 
-  if (isAdmin) return team;
+  if (isGlobalAdminFromUser(user)) return team;
 
   const m = await pool.query(
-    'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND removed_at IS NULL LIMIT 1',
+    'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL LIMIT 1',
     [teamId, user?.sub]
   );
   if (m.rows.length === 0) {
@@ -156,14 +147,13 @@ async function getTeamById(teamId, user) {
 
 // PUBLIC_INTERFACE
 async function updateTeam(teamId, { name, description }, user) {
-  /** Update team name/description; manager or admin only. */
+  /** Update team name/description; team manager or global admin only. */
   if (!teamId) {
     const e = new Error('Team id is required.');
     e.status = 400;
     throw e;
   }
-  const isAdmin = user && user.role && typeof user.role === 'string' && user.role.toLowerCase() === 'admin';
-  const canManage = isAdmin || (await isTeamManagerOrAdmin(user?.sub, teamId));
+  const canManage = isGlobalAdminFromUser(user) || (await isTeamManagerOrAdmin(user?.sub, teamId));
   if (!canManage) {
     const e = new Error('Forbidden');
     e.status = 403;
@@ -189,11 +179,11 @@ async function updateTeam(teamId, { name, description }, user) {
   }
   values.push(teamId);
 
-  const q = `UPDATE teams SET ${fields.join(', ')} WHERE id = $${idx} AND archived_at IS NULL
-             RETURNING id, name, description, created_at, updated_at, archived_at`;
+  const q = `UPDATE teams SET ${fields.join(', ')} WHERE id = $${idx} AND deleted_at IS NULL
+             RETURNING id, name, description, created_at, updated_at, deleted_at`;
   const r = await pool.query(q, values);
   if (r.rows.length === 0) {
-    const e = new Error('Team not found or archived.');
+    const e = new Error('Team not found or deleted.');
     e.status = 404;
     throw e;
   }
@@ -202,14 +192,13 @@ async function updateTeam(teamId, { name, description }, user) {
 
 // PUBLIC_INTERFACE
 async function archiveTeam(teamId, user) {
-  /** Soft-delete (archive) a team; admin or manager. */
+  /** Soft-delete a team; team manager or global admin. */
   if (!teamId) {
     const e = new Error('Team id is required.');
     e.status = 400;
     throw e;
   }
-  const isAdmin = user && user.role && typeof user.role === 'string' && user.role.toLowerCase() === 'admin';
-  const canManage = isAdmin || (await isTeamManagerOrAdmin(user?.sub, teamId));
+  const canManage = isGlobalAdminFromUser(user) || (await isTeamManagerOrAdmin(user?.sub, teamId));
   if (!canManage) {
     const e = new Error('Forbidden');
     e.status = 403;
@@ -217,13 +206,13 @@ async function archiveTeam(teamId, user) {
   }
 
   const r = await pool.query(
-    `UPDATE teams SET archived_at = NOW()
-     WHERE id = $1 AND archived_at IS NULL
-     RETURNING id, name, description, created_at, updated_at, archived_at`,
+    `UPDATE teams SET deleted_at = NOW()
+     WHERE id = $1 AND deleted_at IS NULL
+     RETURNING id, name, description, created_at, updated_at, deleted_at`,
     [teamId]
   );
   if (r.rows.length === 0) {
-    const e = new Error('Team not found or already archived.');
+    const e = new Error('Team not found or already deleted.');
     e.status = 404;
     throw e;
   }
@@ -241,11 +230,9 @@ async function listMembers(teamId, user) {
     throw e;
   }
 
-  // Ensure user has at least membership
-  const isAdmin = user && user.role && typeof user.role === 'string' && user.role.toLowerCase() === 'admin';
-  if (!isAdmin) {
+  if (!isGlobalAdminFromUser(user)) {
     const m = await pool.query(
-      'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND removed_at IS NULL LIMIT 1',
+      'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL LIMIT 1',
       [teamId, user?.sub]
     );
     if (m.rows.length === 0) {
@@ -256,10 +243,10 @@ async function listMembers(teamId, user) {
   }
 
   const r = await pool.query(
-    `SELECT m.user_id, u.name, u.email, m.role, m.created_at, m.updated_at
+    `SELECT m.user_id, u.name, u.email, m.team_role, COALESCE(m.is_manager, FALSE) AS is_manager, m.created_at, m.updated_at
      FROM team_members m
      JOIN users u ON u.id = m.user_id
-     WHERE m.team_id = $1 AND m.removed_at IS NULL
+     WHERE m.team_id = $1 AND m.deleted_at IS NULL
      ORDER BY m.created_at ASC`,
     [teamId]
   );
@@ -274,14 +261,13 @@ async function addMember(teamId, userId, role, actor) {
     e.status = 400;
     throw e;
   }
-  const requestedRole = (role || 'member').toLowerCase();
-  if (!['member', 'manager', 'admin'].includes(requestedRole)) {
-    const e = new Error('Invalid role. Allowed: member, manager, admin.');
+  const requestedRole = (role || 'employee').toLowerCase();
+  if (!['employee', 'manager', 'admin'].includes(requestedRole)) {
+    const e = new Error('Invalid role. Allowed: employee, manager, admin.');
     e.status = 400;
     throw e;
   }
-  const isAdmin = actor && actor.role && actor.role.toLowerCase() === 'admin';
-  const canManage = isAdmin || (await isTeamManagerOrAdmin(actor?.sub, teamId));
+  const canManage = isGlobalAdminFromUser(actor) || (await isTeamManagerOrAdmin(actor?.sub, teamId));
   if (!canManage) {
     const e = new Error('Forbidden');
     e.status = 403;
@@ -289,26 +275,25 @@ async function addMember(teamId, userId, role, actor) {
   }
 
   const r = await pool.query(
-    'INSERT INTO team_members (team_id, user_id, role) ' +
-    'VALUES ($1, $2, $3) ' +
+    'INSERT INTO team_members (id, team_id, user_id, team_role, is_manager) ' +
+    'VALUES (gen_random_uuid(), $1, $2, $3, $4) ' +
     'ON CONFLICT (team_id, user_id) ' +
-    'DO UPDATE SET removed_at = NULL, role = EXCLUDED.role, updated_at = NOW() ' +
-    'RETURNING team_id, user_id, role, created_at, updated_at',
-    [teamId, userId, requestedRole]
+    'DO UPDATE SET deleted_at = NULL, team_role = EXCLUDED.team_role, is_manager = EXCLUDED.is_manager, updated_at = NOW() ' +
+    'RETURNING team_id, user_id, team_role, is_manager, created_at, updated_at',
+    [teamId, userId, requestedRole, requestedRole === 'manager' || requestedRole === 'admin']
   );
   return r.rows[0];
 }
 
 // PUBLIC_INTERFACE
 async function removeMember(teamId, userId, actor) {
-  /** Remove (soft) a member from a team; manager or admin required. */
+  /** Soft-remove a member from a team; manager or admin required. */
   if (!teamId || !userId) {
     const e = new Error('teamId and userId are required.');
     e.status = 400;
     throw e;
   }
-  const isAdmin = actor && actor.role && actor.role.toLowerCase() === 'admin';
-  const canManage = isAdmin || (await isTeamManagerOrAdmin(actor?.sub, teamId));
+  const canManage = isGlobalAdminFromUser(actor) || (await isTeamManagerOrAdmin(actor?.sub, teamId));
   if (!canManage) {
     const e = new Error('Forbidden');
     e.status = 403;
@@ -317,9 +302,9 @@ async function removeMember(teamId, userId, actor) {
 
   const r = await pool.query(
     'UPDATE team_members ' +
-    'SET removed_at = NOW(), updated_at = NOW() ' +
-    'WHERE team_id = $1 AND user_id = $2 AND removed_at IS NULL ' +
-    'RETURNING team_id, user_id, role, created_at, updated_at, removed_at',
+    'SET deleted_at = NOW(), updated_at = NOW() ' +
+    'WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL ' +
+    'RETURNING team_id, user_id, team_role, is_manager, created_at, updated_at, deleted_at',
     [teamId, userId]
   );
   if (r.rows.length === 0) {
@@ -339,13 +324,12 @@ async function changeMemberRole(teamId, userId, role, actor) {
     throw e;
   }
   const requestedRole = role.toLowerCase();
-  if (!['member', 'manager', 'admin'].includes(requestedRole)) {
-    const e = new Error('Invalid role. Allowed: member, manager, admin.');
+  if (!['employee', 'manager', 'admin'].includes(requestedRole)) {
+    const e = new Error('Invalid role. Allowed: employee, manager, admin.');
     e.status = 400;
     throw e;
   }
-  const isAdmin = actor && actor.role && actor.role.toLowerCase() === 'admin';
-  const canManage = isAdmin || (await isTeamManagerOrAdmin(actor?.sub, teamId));
+  const canManage = isGlobalAdminFromUser(actor) || (await isTeamManagerOrAdmin(actor?.sub, teamId));
   if (!canManage) {
     const e = new Error('Forbidden');
     e.status = 403;
@@ -354,119 +338,31 @@ async function changeMemberRole(teamId, userId, role, actor) {
 
   const r = await pool.query(
     'UPDATE team_members ' +
-    'SET role = $3, updated_at = NOW() ' +
-    'WHERE team_id = $1 AND user_id = $2 AND removed_at IS NULL ' +
-    'RETURNING team_id, user_id, role, created_at, updated_at',
-    [teamId, userId, requestedRole]
+    'SET team_role = $3, is_manager = $4, updated_at = NOW() ' +
+    'WHERE team_id = $1 AND user_id = $2 AND deleted_at IS NULL ' +
+    'RETURNING team_id, user_id, team_role, is_manager, created_at, updated_at',
+    [teamId, userId, requestedRole, requestedRole === 'manager' || requestedRole === 'admin']
   );
   if (r.rows.length === 0) {
-    // If not a member yet, optionally add
+    // If not a member yet, insert
     const ins = await pool.query(
-      'INSERT INTO team_members (team_id, user_id, role) ' +
-      'VALUES ($1, $2, $3) ' +
-      'RETURNING team_id, user_id, role, created_at, updated_at',
-      [teamId, userId, requestedRole]
+      'INSERT INTO team_members (id, team_id, user_id, team_role, is_manager) ' +
+      'VALUES (gen_random_uuid(), $1, $2, $3, $4) ' +
+      'RETURNING team_id, user_id, team_role, is_manager, created_at, updated_at',
+      [teamId, userId, requestedRole, requestedRole === 'manager' || requestedRole === 'admin']
     );
     return ins.rows[0];
   }
   return r.rows[0];
 }
 
-// ROLES
+// ROLES (catalog remains for reference)
 
 // PUBLIC_INTERFACE
 async function listRoles() {
-  /** List available roles from roles table. */
+  /** List available roles from roles table (enum-compatible: admin, manager, employee). */
   const r = await pool.query('SELECT id, name, description, created_at FROM roles ORDER BY name ASC');
   return r.rows;
-}
-
-// PUBLIC_INTERFACE
-async function assignRole(teamId, userId, roleName, actor) {
-  /** Assign a role to a user for a team; manager/admin required. */
-  if (!userId || !roleName) {
-    const e = new Error('userId and roleName are required.');
-    e.status = 400;
-    throw e;
-  }
-  const role = roleName.toLowerCase();
-  if (!['member', 'manager', 'admin'].includes(role)) {
-    const e = new Error('Invalid role. Allowed: member, manager, admin.');
-    e.status = 400;
-    throw e;
-  }
-  let canManage = false;
-  if (teamId) {
-    const isAdmin = actor && actor.role && actor.role.toLowerCase() === 'admin';
-    canManage = isAdmin || (await isTeamManagerOrAdmin(actor?.sub, teamId));
-  } else {
-    // Global role assignment restricted to global admin
-    canManage = actor && actor.role && actor.role.toLowerCase() === 'admin';
-  }
-  if (!canManage) {
-    const e = new Error('Forbidden');
-    e.status = 403;
-    throw e;
-  }
-
-  // Ensure role exists
-  await pool.query('INSERT INTO roles (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', [role]);
-
-  const r = await pool.query(
-    'INSERT INTO role_assignments (user_id, team_id, role_name) ' +
-    'VALUES ($1, $2, $3) ' +
-    'RETURNING id, user_id, team_id, role_name, created_at, revoked_at',
-    [userId, teamId || null, role]
-  );
-  return r.rows[0];
-}
-
-// PUBLIC_INTERFACE
-async function revokeRole(assignmentId, actor) {
-  /** Revoke a role assignment by id; admin or relevant team manager. */
-  if (!assignmentId) {
-    const e = new Error('assignmentId is required.');
-    e.status = 400;
-    throw e;
-  }
-
-  // Need to load the assignment to know scope
-  const cur = await pool.query(
-    'SELECT id, user_id, team_id, role_name, revoked_at FROM role_assignments WHERE id = $1',
-    [assignmentId]
-  );
-  if (cur.rows.length === 0) {
-    const e = new Error('Role assignment not found.');
-    e.status = 404;
-    throw e;
-  }
-  const ra = cur.rows[0];
-  if (ra.revoked_at) {
-    const e = new Error('Role assignment already revoked.');
-    e.status = 400;
-    throw e;
-  }
-
-  let canManage = false;
-  if (ra.team_id) {
-    const isAdmin = actor && actor.role && actor.role.toLowerCase() === 'admin';
-    canManage = isAdmin || (await isTeamManagerOrAdmin(actor?.sub, ra.team_id));
-  } else {
-    canManage = actor && actor.role && actor.role.toLowerCase() === 'admin';
-  }
-
-  if (!canManage) {
-    const e = new Error('Forbidden');
-    e.status = 403;
-    throw e;
-  }
-
-  const r = await pool.query(
-    'UPDATE role_assignments SET revoked_at = NOW() WHERE id = $1 ' +
-    'RETURNING id, user_id, team_id, role_name, created_at, revoked_at',
-    [assignmentId]
-  );
-  return r.rows[0];
 }
 
 module.exports = {
@@ -480,7 +376,5 @@ module.exports = {
   removeMember,
   changeMemberRole,
   listRoles,
-  assignRole,
-  revokeRole,
   isTeamManagerOrAdmin,
 };

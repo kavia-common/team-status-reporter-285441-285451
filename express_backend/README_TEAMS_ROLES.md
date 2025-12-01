@@ -8,19 +8,24 @@ Prerequisites:
 Apply schema for users/teams/roles (idempotent):
 - Users:
   psql "$POSTGRES_URL" -f ./src/db/bootstrap.sql
-- Teams + role tables:
+- Teams + role tables (no role_assignments table):
   psql "$POSTGRES_URL" -f ./src/db/bootstrap_teams.sql
-- Ensure baseline roles exist (admin, manager, member):
+- Ensure baseline roles exist (admin, manager, employee):
   psql "$POSTGRES_URL" -f ./src/db/bootstrap_roles.sql
 
-Note:
-- If you previously created the teams table without archived_at, re-run bootstrap_teams.sql. The script is idempotent and now adds missing soft-delete columns (teams.archived_at, team_members.removed_at, role_assignments.revoked_at) to existing databases.
-- The roles list endpoint will be empty until roles are seeded. Run bootstrap_roles.sql above.
+Notes:
+- Canonical soft-delete columns are deleted_at.
+  - teams.deleted_at (was archived_at in older versions)
+  - team_members.deleted_at (was removed_at in older versions)
+- Team roles live on team_members:
+  - team_members.team_role: enum-compatible values 'employee' | 'manager' | 'admin'
+  - team_members.is_manager: boolean convenience flag
+- Global admin comes from users.role = 'admin'. There is no role_assignments table in the canonical schema.
 
 Security:
-- Send Authorization: Bearer <JWT> header.
+- Send Authorization: Bearer <JWT>.
 - Global `admin` (from users.role) can create teams and manage all.
-- Team managers/admins can manage their team members and assignments.
+- Team managers/admins can manage their team members.
 - Regular members can list/view teams they belong to.
 
 Granting admin (one-time bootstrap):
@@ -34,11 +39,11 @@ Option A: Guarded endpoint (set ALLOW_BOOTSTRAP_ADMIN=true temporarily)
    curl -s -X POST "http://localhost:3001/api/bootstrap/grant-admin" \
      -H "Content-Type: application/json" \
      -d '{"userId":"<uuid>"}' | jq .
-3) Immediately remove or set ALLOW_BOOTSTRAP_ADMIN=false after use.
+3) Immediately set ALLOW_BOOTSTRAP_ADMIN=false after use.
 
 Option B: SQL snippet (no endpoint needed)
 psql "$POSTGRES_URL" <<'SQL'
--- Ensure admin role exists
+-- Ensure admin role exists in catalog (optional)
 INSERT INTO roles (name) VALUES ('admin') ON CONFLICT (name) DO NOTHING;
 -- Set global admin on users table by email
 UPDATE users SET role = 'admin', updated_at = NOW()
@@ -65,7 +70,7 @@ Example flow:
    curl -s -X POST "http://localhost:3001/api/teams/<teamId>/members" \
      -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"userId":"<userId>","role":"member"}' | jq .
+     -d '{"userId":"<userId>","role":"employee"}' | jq .
 
 5) Change member role:
    curl -s -X PATCH "http://localhost:3001/api/teams/<teamId>/members/<userId>" \
@@ -76,23 +81,13 @@ Example flow:
 6) List members:
    curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:3001/api/teams/<teamId>/members" | jq .
 
-7) Archive a team:
+7) Soft delete a team:
    curl -s -X DELETE "http://localhost:3001/api/teams/<teamId>" \
      -H "Authorization: Bearer $TOKEN" | jq .
 
-8) List available roles:
+8) List available roles (catalog):
    curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:3001/api/roles" | jq .
 
-9) Assign role (team-scoped):
-   curl -s -X POST "http://localhost:3001/api/roles/assign" \
-     -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"userId":"<userId>","teamId":"<teamId>","roleName":"manager"}' | jq .
-
-10) Revoke role:
-   curl -s -X DELETE "http://localhost:3001/api/roles/assign/<assignmentId>" \
-     -H "Authorization: Bearer $TOKEN" | jq .
-
 Notes:
-- Soft-delete: teams use archived_at; team_members use removed_at; role_assignments use revoked_at.
+- Soft-delete columns are deleted_at everywhere.
 - Swagger docs: /docs; OpenAPI: /openapi.json

@@ -155,7 +155,7 @@ router.delete('/:id', authenticate, teamsController.archive.bind(teamsController
  *             required: [userId]
  *             properties:
  *               userId: { type: string }
- *               role: { type: string, enum: [member, manager, admin] }
+ *               role: { type: string, enum: [employee, manager, admin] }
  *     responses:
  *       201:
  *         description: Member added
@@ -207,7 +207,7 @@ router.post('/:teamId/members', authenticate, teamsController.addMember.bind(tea
  *             type: object
  *             required: [role]
  *             properties:
- *               role: { type: string, enum: [member, manager, admin] }
+ *               role: { type: string, enum: [employee, manager, admin] }
  *     responses:
  *       200:
  *         description: Role changed
