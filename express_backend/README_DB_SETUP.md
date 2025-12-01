@@ -41,6 +41,12 @@ Run the SQL bootstrap script to create or update the `users` table schema:
 psql "$POSTGRES_URL" -f ./src/db/bootstrap.sql
 ```
 
+Also apply team/roles schema:
+
+```
+psql "$POSTGRES_URL" -f ./src/db/bootstrap_teams.sql
+```
+
 If you do not have `POSTGRES_URL`, build it from parts:
 ```
 psql "postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB" -f ./src/db/bootstrap.sql

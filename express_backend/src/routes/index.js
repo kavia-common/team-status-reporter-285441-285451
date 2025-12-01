@@ -1,6 +1,8 @@
 const express = require('express');
 const healthController = require('../controllers/health');
 const authRoutes = require('./auth');
+const teamsRoutes = require('./teams');
+const rolesRoutes = require('./roles');
 
 const router = express.Router();
 // Health endpoint
@@ -41,7 +43,9 @@ const router = express.Router();
  */
 router.get('/', healthController.check.bind(healthController));
 
-// Mount auth routes
+// Mount route groups
 router.use('/api/auth', authRoutes);
+router.use('/api/teams', teamsRoutes);
+router.use('/api/roles', rolesRoutes);
 
 module.exports = router;

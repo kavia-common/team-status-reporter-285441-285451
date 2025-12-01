@@ -15,6 +15,8 @@ const options = {
     tags: [
       { name: 'Auth', description: 'Authentication endpoints' },
       { name: 'Health', description: 'Service health check' },
+      { name: 'Teams', description: 'Team and membership management' },
+      { name: 'Roles', description: 'Role listing and assignment' },
     ],
     components: {
       securitySchemes: {
