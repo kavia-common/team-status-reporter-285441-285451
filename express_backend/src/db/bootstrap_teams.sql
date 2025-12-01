@@ -23,6 +23,20 @@ CREATE TABLE IF NOT EXISTS teams (
   archived_at TIMESTAMPTZ NULL
 );
 
+-- Ensure archived_at exists if teams table pre-existed without it
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_name = 'teams'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'teams' AND column_name = 'archived_at'
+  ) THEN
+    ALTER TABLE teams ADD COLUMN archived_at TIMESTAMPTZ NULL;
+  END IF;
+END$$;
+
 -- Auto-update updated_at for teams
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -52,6 +66,20 @@ CREATE TABLE IF NOT EXISTS team_members (
   removed_at TIMESTAMPTZ NULL,
   PRIMARY KEY (team_id, user_id)
 );
+
+-- Ensure removed_at exists if team_members pre-existed without it
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_name = 'team_members'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'team_members' AND column_name = 'removed_at'
+  ) THEN
+    ALTER TABLE team_members ADD COLUMN removed_at TIMESTAMPTZ NULL;
+  END IF;
+END$$;
 
 DO $$
 BEGIN
@@ -86,6 +114,20 @@ CREATE TABLE IF NOT EXISTS role_assignments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   revoked_at TIMESTAMPTZ NULL
 );
+
+-- Ensure revoked_at exists if role_assignments pre-existed without it
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_name = 'role_assignments'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'role_assignments' AND column_name = 'revoked_at'
+  ) THEN
+    ALTER TABLE role_assignments ADD COLUMN revoked_at TIMESTAMPTZ NULL;
+  END IF;
+END$$;
 
 -- Helpful index
 CREATE INDEX IF NOT EXISTS idx_role_assignments_user_team

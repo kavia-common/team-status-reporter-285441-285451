@@ -7,6 +7,9 @@ Prerequisites:
 - Apply schema for teams and roles:
   psql "$POSTGRES_URL" -f ./src/db/bootstrap_teams.sql
 
+Note:
+- If you previously created the teams table without archived_at, re-run the above bootstrap_teams.sql. The script is idempotent and now adds missing soft-delete columns (teams.archived_at, team_members.removed_at, role_assignments.revoked_at) to existing databases.
+
 Security:
 - Send Authorization: Bearer <JWT> header.
 - Global `admin` (from users.role) can create teams and manage all.
